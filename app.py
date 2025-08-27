@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 import time
+import os
 
 st.set_page_config(
     page_title="Heart Disease Predictor",
@@ -12,11 +13,25 @@ st.set_page_config(
 @st.cache_resource
 def load_model():
     try:
-        model = joblib.load('heart_rf_model.pkl')
-        scaler = joblib.load('heart_scaler.pkl')
+        # Debug: show current files
+        current_files = os.listdir('.')
+        st.sidebar.info(f"Files detected: {[f for f in current_files if f.endswith('.pkl')]}")
+        
+        # Load with absolute paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(current_dir, 'heart_rf_model.pkl')
+        scaler_path = os.path.join(current_dir, 'heart_scaler.pkl')
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at: {model_path}")
+        
+        model = joblib.load(model_path)
+        scaler = joblib.load(scaler_path)
         return model, scaler
-    except FileNotFoundError:
-        st.error("Model files not found. Please ensure heart_rf_model.pkl and heart_scaler.pkl are in the directory.")
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        # Provide fallback or instructions
+        st.info("If this is a deployment issue, please ensure model files are uploaded and are under 100MB each.")
         st.stop()
 
 def validate_inputs(age, trestbps, chol, thalach, oldpeak):
@@ -33,10 +48,19 @@ def validate_inputs(age, trestbps, chol, thalach, oldpeak):
         errors.append("ST depression must be between 0.0-6.0")
     return errors
 
-model, scaler = load_model()
+# Load model with error handling
+try:
+    model, scaler = load_model()
+    model_loaded = True
+except:
+    model_loaded = False
 
 st.title("❤️ Heart Disease Detection System")
 st.markdown("Predict heart disease risk based on clinical parameters")
+
+if not model_loaded:
+    st.warning("Model not loaded. Using demo mode with example predictions.")
+    st.info("To enable real predictions, ensure heart_rf_model.pkl and heart_scaler.pkl are uploaded and accessible.")
 
 risk_threshold = st.sidebar.slider(
     "Risk Threshold", 
@@ -88,50 +112,57 @@ with col2:
             with st.spinner("Analyzing patient data..."):
                 time.sleep(1)
                 
-                input_data = {
-                    'age': age,
-                    'trestbps': trestbps,
-                    'chol': chol,
-                    'thalach': thalach,
-                    'oldpeak': oldpeak,
-                    'sex_Male': 1 if sex == "Male" else 0,
-                    'sex_Female': 1 if sex == "Female" else 0,
-                    'cp_Typical Angina': 1 if cp == "Typical Angina" else 0,
-                    'cp_Atypical Angina': 1 if cp == "Atypical Angina" else 0,
-                    'cp_Non-anginal Pain': 1 if cp == "Non-anginal Pain" else 0,
-                    'cp_Asymptomatic': 1 if cp == "Asymptomatic" else 0,
-                    'fbs_No': 1 if fbs == "No" else 0,
-                    'fbs_Yes': 1 if fbs == "Yes" else 0,
-                    'restecg_Normal': 1 if restecg == "Normal" else 0,
-                    'restecg_ST-T Wave Abnormality': 1 if restecg == "ST-T Wave Abnormality" else 0,
-                    'restecg_Left Ventricular Hypertrophy': 1 if restecg == "Left Ventricular Hypertrophy" else 0,
-                    'exang_No': 1 if exang == "No" else 0,
-                    'exang_Yes': 1 if exang == "Yes" else 0,
-                    'slope_Upsloping': 1 if slope == "Upsloping" else 0,
-                    'slope_Flat': 1 if slope == "Flat" else 0,
-                    'slope_Downsloping': 1 if slope == "Downsloping" else 0,
-                    'ca_0': 1 if ca == 0 else 0,
-                    'ca_1': 1 if ca == 1 else 0,
-                    'ca_2': 1 if ca == 2 else 0,
-                    'ca_3': 1 if ca == 3 else 0,
-                    'thal_Normal': 1 if thal == "Normal" else 0,
-                    'thal_Fixed Defect': 1 if thal == "Fixed Defect" else 0,
-                    'thal_Reversible Defect': 1 if thal == "Reversible Defect" else 0
-                }
-                
-                input_df = pd.DataFrame([input_data])
-                
-                expected_columns = model.feature_names_in_
-                for col in expected_columns:
-                    if col not in input_df.columns:
-                        input_df[col] = 0
-                
-                input_df = input_df[expected_columns]
-                
-                input_scaled = scaler.transform(input_df)
-                
-                prediction = model.predict(input_scaled)[0]
-                probability = model.predict_proba(input_scaled)[0][1]
+                if not model_loaded:
+                    # Demo mode - random prediction based on inputs
+                    st.warning("Demo Mode: Using simulated predictions")
+                    probability = min(0.95, (age/100 + chol/600 + trestbps/200) / 3)
+                    prediction = 1 if probability > risk_threshold else 0
+                else:
+                    # Real model prediction
+                    input_data = {
+                        'age': age,
+                        'trestbps': trestbps,
+                        'chol': chol,
+                        'thalach': thalach,
+                        'oldpeak': oldpeak,
+                        'sex_Male': 1 if sex == "Male" else 0,
+                        'sex_Female': 1 if sex == "Female" else 0,
+                        'cp_Typical Angina': 1 if cp == "Typical Angina" else 0,
+                        'cp_Atypical Angina': 1 if cp == "Atypical Angina" else 0,
+                        'cp_Non-anginal Pain': 1 if cp == "Non-anginal Pain" else 0,
+                        'cp_Asymptomatic': 1 if cp == "Asymptomatic" else 0,
+                        'fbs_No': 1 if fbs == "No" else 0,
+                        'fbs_Yes': 1 if fbs == "Yes" else 0,
+                        'restecg_Normal': 1 if restecg == "Normal" else 0,
+                        'restecg_ST-T Wave Abnormality': 1 if restecg == "ST-T Wave Abnormality" else 0,
+                        'restecg_Left Ventricular Hypertrophy': 1 if restecg == "Left Ventricular Hypertrophy" else 0,
+                        'exang_No': 1 if exang == "No" else 0,
+                        'exang_Yes': 1 if exang == "Yes" else 0,
+                        'slope_Upsloping': 1 if slope == "Upsloping" else 0,
+                        'slope_Flat': 1 if slope == "Flat" else 0,
+                        'slope_Downsloping': 1 if slope == "Downsloping" else 0,
+                        'ca_0': 1 if ca == 0 else 0,
+                        'ca_1': 1 if ca == 1 else 0,
+                        'ca_2': 1 if ca == 2 else 0,
+                        'ca_3': 1 if ca == 3 else 0,
+                        'thal_Normal': 1 if thal == "Normal" else 0,
+                        'thal_Fixed Defect': 1 if thal == "Fixed Defect" else 0,
+                        'thal_Reversible Defect': 1 if thal == "Reversible Defect" else 0
+                    }
+                    
+                    input_df = pd.DataFrame([input_data])
+                    
+                    expected_columns = model.feature_names_in_
+                    for col in expected_columns:
+                        if col not in input_df.columns:
+                            input_df[col] = 0
+                    
+                    input_df = input_df[expected_columns]
+                    
+                    input_scaled = scaler.transform(input_df)
+                    
+                    prediction = model.predict(input_scaled)[0]
+                    probability = model.predict_proba(input_scaled)[0][1]
                 
                 st.success("Analysis complete!")
                 
@@ -162,30 +193,6 @@ with col2:
                         st.write(factor)
                 else:
                     st.write("✅ No significant risk factors identified")
-                
-                report_text = f"""
-HEART DISEASE RISK ASSESSMENT REPORT
-====================================
-Patient Age: {age}
-Resting BP: {trestbps} mm/Hg
-Cholesterol: {chol} mg/dl
-Max Heart Rate: {thalach}
-ST Depression: {oldpeak}
-
-PREDICTION RESULTS:
-- Risk Probability: {probability:.2%}
-- Recommendation: {'High Risk - Consult Cardiologist' if probability >= risk_threshold else 'Low Risk - Maintain Lifestyle'}
-
-RISK FACTORS IDENTIFIED:
-{chr(10).join(risk_factors) if risk_factors else 'No significant risk factors'}
-                """
-                
-                st.download_button(
-                    "Download Report",
-                    data=report_text,
-                    file_name="heart_risk_report.txt",
-                    mime="text/plain"
-                )
 
 with st.sidebar:
     st.header("About This App")
@@ -210,7 +217,6 @@ with st.sidebar:
         st.session_state.chol = 260
         st.session_state.thalach = 150
         st.session_state.oldpeak = 1.2
-        st.rerun()
     
     st.header("Disclaimer")
     st.warning("""
