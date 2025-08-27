@@ -3,6 +3,11 @@ import pandas as pd
 import joblib
 import time
 import os
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import numpy as np
 
 st.set_page_config(
     page_title="Heart Disease Predictor",
@@ -11,27 +16,60 @@ st.set_page_config(
 )
 
 @st.cache_resource
-def load_model():
+def load_or_train_model():
     try:
-        # Debug: show current files
-        current_files = os.listdir('.')
-        st.sidebar.info(f"Files detected: {[f for f in current_files if f.endswith('.pkl')]}")
-        
-        # Load with absolute paths
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(current_dir, 'heart_rf_model.pkl')
-        scaler_path = os.path.join(current_dir, 'heart_scaler.pkl')
-        
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found at: {model_path}")
-        
-        model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
-        return model, scaler
+        if os.path.exists('heart_rf_model.pkl') and os.path.exists('heart_scaler.pkl'):
+            model = joblib.load('heart_rf_model.pkl')
+            scaler = joblib.load('heart_scaler.pkl')
+            st.sidebar.success("✅ Loaded pre-trained model")
+            return model, scaler, True
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        # Provide fallback or instructions
-        st.info("If this is a deployment issue, please ensure model files are uploaded and are under 100MB each.")
+        st.sidebar.warning(f"Could not load model: {str(e)}")
+    
+    try:
+        with st.sidebar:
+            with st.spinner("Training new model... This may take a minute"):
+                url = "https://raw.githubusercontent.com/Aniruddha567/Heart-Disease-Detector/main/heart_disease_uci.csv"
+                df = pd.read_csv(url)
+                
+                numeric_cols = df.select_dtypes(include='number').columns
+                df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].mean())
+                
+                cat_cols = df.select_dtypes(include='object').columns.tolist()
+                if 'num' in cat_cols:
+                    cat_cols.remove('num')
+
+                X = df.drop('num', axis=1)
+                y = (df['num'] > 0).astype(int)
+                
+                X = pd.get_dummies(X, columns=cat_cols)
+                
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+                
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
+                
+                model = RandomForestClassifier(
+                    n_estimators=50,
+                    random_state=42,
+                    max_depth=10
+                )
+                model.fit(X_train_scaled, y_train)
+                
+                y_pred = model.predict(X_test_scaled)
+                accuracy = accuracy_score(y_test, y_pred)
+                
+                joblib.dump(model, 'heart_rf_model.pkl')
+                joblib.dump(scaler, 'heart_scaler.pkl')
+                
+                st.sidebar.success(f"✅ Trained new model (Accuracy: {accuracy:.2%})")
+                return model, scaler, False
+                
+    except Exception as e:
+        st.error(f"Error training model: {str(e)}")
         st.stop()
 
 def validate_inputs(age, trestbps, chol, thalach, oldpeak):
@@ -48,27 +86,17 @@ def validate_inputs(age, trestbps, chol, thalach, oldpeak):
         errors.append("ST depression must be between 0.0-6.0")
     return errors
 
-# Load model with error handling
-try:
-    model, scaler = load_model()
-    model_loaded = True
-except:
-    model_loaded = False
+model, scaler, model_loaded = load_or_train_model()
 
 st.title("❤️ Heart Disease Detection System")
 st.markdown("Predict heart disease risk based on clinical parameters")
-
-if not model_loaded:
-    st.warning("Model not loaded. Using demo mode with example predictions.")
-    st.info("To enable real predictions, ensure heart_rf_model.pkl and heart_scaler.pkl are uploaded and accessible.")
 
 risk_threshold = st.sidebar.slider(
     "Risk Threshold", 
     min_value=0.0, 
     max_value=1.0, 
     value=0.5, 
-    step=0.05,
-    help="Adjust sensitivity for high-risk detection"
+    step=0.05
 )
 
 col1, col2 = st.columns([2, 1])
@@ -112,57 +140,49 @@ with col2:
             with st.spinner("Analyzing patient data..."):
                 time.sleep(1)
                 
-                if not model_loaded:
-                    # Demo mode - random prediction based on inputs
-                    st.warning("Demo Mode: Using simulated predictions")
-                    probability = min(0.95, (age/100 + chol/600 + trestbps/200) / 3)
-                    prediction = 1 if probability > risk_threshold else 0
-                else:
-                    # Real model prediction
-                    input_data = {
-                        'age': age,
-                        'trestbps': trestbps,
-                        'chol': chol,
-                        'thalach': thalach,
-                        'oldpeak': oldpeak,
-                        'sex_Male': 1 if sex == "Male" else 0,
-                        'sex_Female': 1 if sex == "Female" else 0,
-                        'cp_Typical Angina': 1 if cp == "Typical Angina" else 0,
-                        'cp_Atypical Angina': 1 if cp == "Atypical Angina" else 0,
-                        'cp_Non-anginal Pain': 1 if cp == "Non-anginal Pain" else 0,
-                        'cp_Asymptomatic': 1 if cp == "Asymptomatic" else 0,
-                        'fbs_No': 1 if fbs == "No" else 0,
-                        'fbs_Yes': 1 if fbs == "Yes" else 0,
-                        'restecg_Normal': 1 if restecg == "Normal" else 0,
-                        'restecg_ST-T Wave Abnormality': 1 if restecg == "ST-T Wave Abnormality" else 0,
-                        'restecg_Left Ventricular Hypertrophy': 1 if restecg == "Left Ventricular Hypertrophy" else 0,
-                        'exang_No': 1 if exang == "No" else 0,
-                        'exang_Yes': 1 if exang == "Yes" else 0,
-                        'slope_Upsloping': 1 if slope == "Upsloping" else 0,
-                        'slope_Flat': 1 if slope == "Flat" else 0,
-                        'slope_Downsloping': 1 if slope == "Downsloping" else 0,
-                        'ca_0': 1 if ca == 0 else 0,
-                        'ca_1': 1 if ca == 1 else 0,
-                        'ca_2': 1 if ca == 2 else 0,
-                        'ca_3': 1 if ca == 3 else 0,
-                        'thal_Normal': 1 if thal == "Normal" else 0,
-                        'thal_Fixed Defect': 1 if thal == "Fixed Defect" else 0,
-                        'thal_Reversible Defect': 1 if thal == "Reversible Defect" else 0
-                    }
-                    
-                    input_df = pd.DataFrame([input_data])
-                    
-                    expected_columns = model.feature_names_in_
-                    for col in expected_columns:
-                        if col not in input_df.columns:
-                            input_df[col] = 0
-                    
-                    input_df = input_df[expected_columns]
-                    
-                    input_scaled = scaler.transform(input_df)
-                    
-                    prediction = model.predict(input_scaled)[0]
-                    probability = model.predict_proba(input_scaled)[0][1]
+                input_data = {
+                    'age': age,
+                    'trestbps': trestbps,
+                    'chol': chol,
+                    'thalach': thalach,
+                    'oldpeak': oldpeak,
+                    'sex_Male': 1 if sex == "Male" else 0,
+                    'sex_Female': 1 if sex == "Female" else 0,
+                    'cp_Typical Angina': 1 if cp == "Typical Angina" else 0,
+                    'cp_Atypical Angina': 1 if cp == "Atypical Angina" else 0,
+                    'cp_Non-anginal Pain': 1 if cp == "Non-anginal Pain" else 0,
+                    'cp_Asymptomatic': 1 if cp == "Asymptomatic" else 0,
+                    'fbs_No': 1 if fbs == "No" else 0,
+                    'fbs_Yes': 1 if fbs == "Yes" else 0,
+                    'restecg_Normal': 1 if restecg == "Normal" else 0,
+                    'restecg_ST-T Wave Abnormality': 1 if restecg == "ST-T Wave Abnormality" else 0,
+                    'restecg_Left Ventricular Hypertrophy': 1 if restecg == "Left Ventricular Hypertrophy" else 0,
+                    'exang_No': 1 if exang == "No" else 0,
+                    'exang_Yes': 1 if exang == "Yes" else 0,
+                    'slope_Upsloping': 1 if slope == "Upsloping" else 0,
+                    'slope_Flat': 1 if slope == "Flat" else 0,
+                    'slope_Downsloping': 1 if slope == "Downsloping" else 0,
+                    'ca_0': 1 if ca == 0 else 0,
+                    'ca_1': 1 if ca == 1 else 0,
+                    'ca_2': 1 if ca == 2 else 0,
+                    'ca_3': 1 if ca == 3 else 0,
+                    'thal_Normal': 1 if thal == "Normal" else 0,
+                    'thal_Fixed Defect': 1 if thal == "Fixed Defect" else 0,
+                    'thal_Reversible Defect': 1 if thal == "Reversible Defect" else 0
+                }
+                
+                input_df = pd.DataFrame([input_data])
+                
+                expected_columns = model.feature_names_in_
+                for col in expected_columns:
+                    if col not in input_df.columns:
+                        input_df[col] = 0
+                
+                input_df = input_df[expected_columns]
+                
+                input_scaled = scaler.transform(input_df)
+                prediction = model.predict(input_scaled)[0]
+                probability = model.predict_proba(input_scaled)[0][1]
                 
                 st.success("Analysis complete!")
                 
@@ -196,20 +216,10 @@ with col2:
 
 with st.sidebar:
     st.header("About This App")
-    st.info("""
-    This app predicts heart disease risk using machine learning.
-    It's based on clinical data from the UCI Heart Disease dataset.
-    
-    **Accuracy**: 85%
-    **Model**: Random Forest Classifier
-    """)
+    st.info("This app predicts heart disease risk using machine learning.")
     
     st.header("How to Use")
-    st.write("""
-    1. Fill in patient clinical parameters
-    2. Click 'Predict Risk'
-    3. Review results and recommendations
-    """)
+    st.write("1. Fill in patient clinical parameters\n2. Click 'Predict Risk'\n3. Review results and recommendations")
     
     if st.button("Load Sample Patient"):
         st.session_state.age = 55
@@ -219,10 +229,7 @@ with st.sidebar:
         st.session_state.oldpeak = 1.2
     
     st.header("Disclaimer")
-    st.warning("""
-    This tool is for screening purposes only.
-    Always consult healthcare professionals for medical diagnosis.
-    """)
+    st.warning("This tool is for screening purposes only. Always consult healthcare professionals for medical diagnosis.")
 
 st.markdown("""
 <style>
